@@ -1112,6 +1112,8 @@ PHPAPI zend_result php_uri_parser_register(const php_uri_parser *uri_parser)
 	return result;
 }
 
+#define PHP_URI_WHATWG_INVALID_REVERSE_SOLIDIUS_ALIAS "InvalidReverseSoldius"
+
 /* Registers the deprecated, misspelled "InvalidReverseSoldius" class constant as
  * an alias of the correctly spelled UrlValidationErrorType::InvalidReverseSolidus
  * enum case. The typo was shipped in PHP 8.5, so the alias is kept for backwards
@@ -1162,9 +1164,13 @@ static void php_uri_register_invalid_reverse_solidus_alias(zend_class_entry *ce)
 	Z_TYPE_INFO(alias_value) = IS_CONSTANT_AST;
 	Z_AST(alias_value) = ref;
 
-	zend_string *alias_name = zend_string_init_interned("InvalidReverseSoldius", sizeof("InvalidReverseSoldius") - 1, true);
+	zend_string *alias_name = zend_string_init_interned(
+		PHP_URI_WHATWG_INVALID_REVERSE_SOLIDIUS_ALIAS,
+		sizeof(PHP_URI_WHATWG_INVALID_REVERSE_SOLIDIUS_ALIAS) - 1,
+		true);
 	zend_class_constant *alias = zend_declare_class_constant_ex(
 		ce, alias_name, &alias_value, ZEND_ACC_PUBLIC | ZEND_ACC_DEPRECATED, NULL);
+	zend_string_release_ex(alias_name, true);
 
 	/* Attach #[\Deprecated(since: "8.6", message: "...")] so the deprecation notice
 	 * directs users to the correctly spelled enum case. */
@@ -1173,6 +1179,29 @@ static void php_uri_register_invalid_reverse_solidus_alias(zend_class_entry *ce)
 	attr->args[0].name = ZSTR_KNOWN(ZEND_STR_SINCE);
 	ZVAL_STR(&attr->args[1].value, zend_string_init("use Uri\\WhatWg\\UrlValidationErrorType::InvalidReverseSolidus instead", strlen("use Uri\\WhatWg\\UrlValidationErrorType::InvalidReverseSolidus instead"), 1));
 	attr->args[1].name = ZSTR_KNOWN(ZEND_STR_MESSAGE);
+}
+
+static void php_uri_cleanup_invalid_reverse_solidus_alias(zend_class_entry *ce)
+{
+	if (ce == NULL) {
+		return;
+	}
+
+	zend_class_constant *alias = zend_hash_str_find_ptr(
+		&ce->constants_table,
+		PHP_URI_WHATWG_INVALID_REVERSE_SOLIDIUS_ALIAS,
+		sizeof(PHP_URI_WHATWG_INVALID_REVERSE_SOLIDIUS_ALIAS) - 1);
+	if (alias == NULL || alias->ce != ce || Z_TYPE(alias->value) != IS_CONSTANT_AST) {
+		return;
+	}
+
+	/* This alias uses a regular class-constant AST, while Zend's internal class
+	 * cleanup currently only expects lazy enum cases to remain as CONSTANT_AST.
+	 * If the alias was never resolved during runtime, free the extension-owned
+	 * persistent AST before Zend destroys the internal class entry. */
+	ZEND_ASSERT(Z_ASTVAL(alias->value)->kind == ZEND_AST_CLASS_CONST);
+	pefree(Z_AST(alias->value), 1);
+	ZVAL_UNDEF(&alias->value);
 }
 
 static PHP_MINIT_FUNCTION(uri)
@@ -1238,6 +1267,7 @@ static PHP_MINFO_FUNCTION(uri)
 
 static PHP_MSHUTDOWN_FUNCTION(uri)
 {
+	php_uri_cleanup_invalid_reverse_solidus_alias(php_uri_ce_whatwg_url_validation_error_type);
 	zend_hash_destroy(&uri_parsers);
 
 	return SUCCESS;
